@@ -1,74 +1,96 @@
-// Midnight Getaway — synthesised WebAudio bleeps. No audio files, no network:
-// every sound is an oscillator (and a little noise for the coin) built on demand.
-
+// Copper Fox — synthesised WebAudio sounds. No audio files, no network: every
+// sound is an oscillator built on demand, and nothing plays until the player
+// first presses a key or clicks (browsers demand a gesture before sound).
 export function createAudio() {
   let ctx = null;
   let muted = false;
 
   function ensure() {
-    if (ctx) return ctx;
-    try {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return null;
-      ctx = new AC();
-    } catch {
-      ctx = null;
+    if (!ctx) {
+      try {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        ctx = new AudioContext();
+      } catch {
+        ctx = null;
+      }
     }
+    if (ctx && ctx.state === 'suspended') void ctx.resume();
     return ctx;
   }
 
-  function tone(freq, dur, type, gain, when = 0, slideTo = null) {
-    if (muted) return;
-    const ac = ensure();
-    if (!ac) return;
-    if (ac.state === 'suspended') ac.resume().catch(() => {});
-    const t0 = ac.currentTime + when;
-    const osc = ac.createOscillator();
-    const amp = ac.createGain();
-    osc.type = type;
-    osc.frequency.setValueAtTime(freq, t0);
-    if (slideTo !== null) osc.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
-    amp.gain.setValueAtTime(0.0001, t0);
-    amp.gain.exponentialRampToValueAtTime(gain, t0 + 0.012);
-    amp.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-    osc.connect(amp);
-    amp.connect(ac.destination);
-    osc.start(t0);
-    osc.stop(t0 + dur + 0.05);
+  function tone(freq, seconds, type, gainValue, when = 0) {
+    const audio = ensure();
+    if (!audio || muted) return;
+    const start = audio.currentTime + when;
+    const oscillator = audio.createOscillator();
+    const gain = audio.createGain();
+    oscillator.type = type;
+    oscillator.frequency.setValueAtTime(freq, start);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(gainValue, start + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + seconds);
+    oscillator.connect(gain);
+    gain.connect(audio.destination);
+    oscillator.start(start);
+    oscillator.stop(start + seconds + 0.05);
   }
 
-  function noise(dur, gain, when = 0) {
-    if (muted) return;
-    const ac = ensure();
-    if (!ac) return;
-    const t0 = ac.currentTime + when;
-    const len = Math.max(1, Math.floor(ac.sampleRate * dur));
-    const buf = ac.createBuffer(1, len, ac.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < len; i += 1) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
-    const src = ac.createBufferSource();
-    src.buffer = buf;
-    const amp = ac.createGain();
-    amp.gain.setValueAtTime(gain, t0);
-    amp.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-    src.connect(amp);
-    amp.connect(ac.destination);
-    src.start(t0);
+  function noise(seconds, gainValue, when = 0) {
+    const audio = ensure();
+    if (!audio || muted) return;
+    const start = audio.currentTime + when;
+    const length = Math.floor(audio.sampleRate * seconds);
+    const buffer = audio.createBuffer(1, length, audio.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < length; i += 1) data[i] = (Math.random() * 2 - 1) * (1 - i / length);
+    const source = audio.createBufferSource();
+    const gain = audio.createGain();
+    source.buffer = buffer;
+    gain.gain.setValueAtTime(gainValue, start);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + seconds);
+    source.connect(gain);
+    gain.connect(audio.destination);
+    source.start(start);
   }
 
   return {
-    pickup() { tone(880, 0.12, 'sine', 0.16); tone(1318, 0.18, 'sine', 0.14, 0.07); },
-    coin() { noise(0.08, 0.2); tone(2093, 0.1, 'triangle', 0.12, 0.02); },
-    emp() { tone(1200, 0.35, 'sawtooth', 0.1, 0, 120); noise(0.25, 0.08); },
-    stare() { tone(520, 0.14, 'square', 0.07); },
-    spotted() { tone(740, 0.16, 'square', 0.12); tone(740, 0.16, 'square', 0.12, 0.18); },
-    caught() { tone(220, 0.5, 'sawtooth', 0.16, 0, 55); },
-    win() {
-      [523, 659, 784, 1046].forEach((f, i) => tone(f, 0.22, 'triangle', 0.14, i * 0.11));
+    /** Call on the first gesture so later sounds are allowed to play. */
+    unlock() {
+      ensure();
     },
     toggleMute() {
       muted = !muted;
       return muted;
+    },
+    get muted() {
+      return muted;
+    },
+    step() {
+      tone(180, 0.05, 'sine', 0.02);
+    },
+    grab() {
+      tone(880, 0.12, 'sine', 0.12);
+      tone(1318, 0.18, 'sine', 0.1, 0.08);
+    },
+    spotted() {
+      tone(392, 0.16, 'square', 0.07);
+      tone(311, 0.22, 'square', 0.07, 0.14);
+    },
+    tool() {
+      noise(0.35, 0.1);
+      tone(220, 0.2, 'triangle', 0.06, 0.05);
+    },
+    busted() {
+      tone(220, 0.3, 'sawtooth', 0.12);
+      tone(165, 0.45, 'sawtooth', 0.12, 0.25);
+    },
+    clear() {
+      tone(523, 0.14, 'sine', 0.12);
+      tone(659, 0.14, 'sine', 0.12, 0.12);
+      tone(784, 0.28, 'sine', 0.12, 0.24);
+    },
+    click() {
+      tone(660, 0.05, 'sine', 0.06);
     },
   };
 }
