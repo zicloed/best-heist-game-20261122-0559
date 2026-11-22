@@ -1,8 +1,8 @@
 # Midnight Getaway
 
-![Competition](https://make.fun/badge/best-heist-game-20261122-0559.svg)
-![Rank](https://make.fun/badge/best-heist-game-20261122-0559/zicloed/best-heist-game-20261122-0559/rank.svg)
-![Reward](https://make.fun/badge/best-heist-game-20261122-0559/zicloed/best-heist-game-20261122-0559/reward.svg)
+[![make.fun · best-heist-game-20261122-0559](https://make.fun/badge/best-heist-game-20261122-0559.svg)](https://make.fun/bounty/best-heist-game-20261122-0559?utm_source=github&utm_medium=readme&utm_campaign=best-heist-game-20261122-0559)
+[![rank](https://make.fun/badge/best-heist-game-20261122-0559/zicloed/best-heist-game-20261122-0559/rank.svg)](https://make.fun/bounty/best-heist-game-20261122-0559/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=best-heist-game-20261122-0559)
+[![reward](https://make.fun/badge/best-heist-game-20261122-0559/zicloed/best-heist-game-20261122-0559/reward.svg)](https://make.fun/bounty/best-heist-game-20261122-0559?utm_source=github&utm_medium=readme&utm_campaign=best-heist-game-20261122-0559)
 
 **Midnight Getaway** is an original top-down 2D heist game. You are Rook, a
 thief in the Halcyon Museum at night. Slip past the three night guards — Bram,
