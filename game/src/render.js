@@ -1,19 +1,26 @@
-// Midnight Getaway — everything drawn: the museum floor, the vault, the loot,
+// Copper Fox — everything drawn: the room floor, the rugs and walls, the loot,
 // the vision cones, the guards and cameras, the thief, the HUD and the screens.
 // It only reads state; it never changes a rule.
+import { CAMERA, FIELD, GUARD, HUD_HEIGHT, THIEF } from './config.js';
 
-import { FIELD, LAMPS, LOOT, PALETTE, RUGS, VAN, WALLS, FONT } from './config.js';
-import { CAMERA, GUARD } from './config.js';
+export const SCREEN_TITLE = 'title';
+export const SCREEN_PLAY = 'play';
+export const SCREEN_PAUSED = 'paused';
+export const SCREEN_CLEARED = 'cleared';
+export const SCREEN_BUSTED = 'busted';
+export const SCREEN_COMPLETE = 'complete';
 
-export const SCREEN_TITLE = 0;
-export const SCREEN_PLAY = 1;
-export const SCREEN_PAUSED = 2;
-export const SCREEN_WIN = 3;
-export const SCREEN_CAUGHT = 4;
+const FLOOR_A = '#141a2b';
+const FLOOR_B = '#171e33';
+const WALL = '#2c3550';
+const WALL_TOP = '#4a5878';
+const RUG = '#4a2230';
+const CONE_GUARD = 'rgba(255, 190, 60, 0.20)';
+const CONE_ALERT = 'rgba(255, 64, 64, 0.30)';
+const CONE_CAMERA = 'rgba(96, 180, 255, 0.16)';
+const GOLD = '#f5c542';
 
-const TILE = 80;
-
-function drawCone(ctx, x, y, angle, range, halfAngle, fill) {
+function cone(ctx, x, y, angle, range, halfAngle, fill) {
   ctx.beginPath();
   ctx.moveTo(x, y);
   ctx.arc(x, y, range, angle - halfAngle, angle + halfAngle);
@@ -22,378 +29,335 @@ function drawCone(ctx, x, y, angle, range, halfAngle, fill) {
   ctx.fill();
 }
 
-function coneFill(suspicion, base, camera) {
-  if (camera) return PALETTE.camCone;
-  if (suspicion >= GUARD.chaseAt) return PALETTE.coneAlarmed;
-  if (suspicion >= GUARD.stareAt) return PALETTE.coneSuspicious;
-  return base;
-}
-
-function drawGuard(ctx, g, t) {
-  drawCone(ctx, g.x, g.y, g.angle, GUARD.viewRange, GUARD.viewHalfAngle,
-    coneFill(g.suspicion, PALETTE.coneCalm, false));
-  // Body: navy uniform, gold cap, a little bob while walking.
-  const bob = g.state === 'patrol' ? Math.sin(t * 8) * 1.5 : 0;
-  ctx.fillStyle = PALETTE.guardDark;
-  ctx.beginPath();
-  ctx.arc(g.x, g.y + bob * 0.3, g.radius + 2, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = PALETTE.guard;
-  ctx.beginPath();
-  ctx.arc(g.x, g.y, g.radius - 2, 0, Math.PI * 2);
-  ctx.fill();
-  // Facing tick.
-  ctx.strokeStyle = PALETTE.guardDark;
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(g.x, g.y);
-  ctx.lineTo(g.x + Math.cos(g.angle) * (g.radius + 6), g.y + Math.sin(g.angle) * (g.radius + 6));
-  ctx.stroke();
-  // Cap brim.
-  ctx.fillStyle = '#2a2118';
-  ctx.beginPath();
-  ctx.arc(g.x, g.y - 4, 6, Math.PI, 0);
-  ctx.fill();
-  // "?" while staring, "!" while chasing.
-  if (g.state === 'stare' || g.suspicion >= GUARD.stareAt) {
-    ctx.fillStyle = g.state === 'chase' ? '#ff5a5a' : '#ffb02e';
-    ctx.font = 'bold 26px ' + FONT;
-    ctx.textAlign = 'center';
-    ctx.fillText(g.state === 'chase' ? '!' : '?', g.x, g.y - g.radius - 8);
-  }
-  ctx.fillStyle = PALETTE.text;
-  ctx.font = '11px ' + FONT;
-  ctx.textAlign = 'center';
-  ctx.fillText(g.name, g.x, g.y + g.radius + 14);
-}
-
-function drawCamera(ctx, c) {
-  const fill = c.disabled > 0 ? PALETTE.camConeOff : PALETTE.camCone;
-  drawCone(ctx, c.x, c.y, c.angle, CAMERA.viewRange, CAMERA.viewHalfAngle, fill);
-  ctx.fillStyle = c.disabled > 0 ? '#5a6a8a' : '#3a4a6a';
-  ctx.fillRect(c.x - 9, c.y - 9, 18, 18);
-  ctx.fillStyle = c.disabled > 0 ? '#8899bb' : '#ff4d4d';
-  ctx.beginPath();
-  ctx.arc(c.x + Math.cos(c.angle) * 8, c.y + Math.sin(c.angle) * 8, 4, 0, Math.PI * 2);
-  ctx.fill();
-  if (c.suspicion >= GUARD.chaseAt) {
-    ctx.fillStyle = '#ff5a5a';
-    ctx.font = 'bold 22px ' + FONT;
-    ctx.textAlign = 'center';
-    ctx.fillText('!', c.x, c.y + 30);
-  }
-}
-
-function drawLoot(ctx, item, t) {
-  const sparkle = 0.6 + 0.4 * Math.sin(t * 4 + item.x);
-  ctx.save();
-  ctx.translate(item.x, item.y);
-  if (item.main) {
-    // The Starlight Diamond in its glass case.
-    ctx.strokeStyle = 'rgba(174, 230, 255, 0.7)';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(-26, -26, 52, 52);
-    ctx.fillStyle = PALETTE.diamond;
-    ctx.beginPath();
-    ctx.moveTo(0, -16);
-    ctx.lineTo(14, -4);
-    ctx.lineTo(8, 14);
-    ctx.lineTo(-8, 14);
-    ctx.lineTo(-14, -4);
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,' + sparkle.toFixed(2) + ')';
-    ctx.beginPath();
-    ctx.arc(-4, -6, 3, 0, Math.PI * 2);
-    ctx.fill();
-  } else {
-    ctx.fillStyle = PALETTE.loot;
-    ctx.globalAlpha = sparkle;
-    ctx.beginPath();
-    ctx.arc(0, 0, item.r - 4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = '#7a5c00';
-    ctx.font = 'bold 13px ' + FONT;
-    ctx.textAlign = 'center';
-    ctx.fillText('$', 0, 5);
-  }
-  ctx.fillStyle = PALETTE.text;
-  ctx.font = '11px ' + FONT;
-  ctx.textAlign = 'center';
-  ctx.fillText(item.name, 0, item.r + 16);
-  ctx.restore();
+function formatTime(seconds) {
+  const total = Math.floor(seconds);
+  const minutes = Math.floor(total / 60);
+  const rest = total % 60;
+  return `${minutes}:${String(rest).padStart(2, '0')}`;
 }
 
 export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
 
-  function drawFloor(t) {
-    ctx.fillStyle = PALETTE.floor;
-    ctx.fillRect(0, 0, FIELD.width, FIELD.height);
-    // Marble checker, subtle.
-    for (let y = 0; y < FIELD.height / TILE; y += 1) {
-      for (let x = 0; x < FIELD.width / TILE; x += 1) {
-        if ((x + y) % 2 === 0) continue;
-        ctx.fillStyle = (x + y) % 4 === 1 ? PALETTE.floorTileA : PALETTE.floorTileB;
-        ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
+  function drawFloor(state) {
+    ctx.fillStyle = FLOOR_A;
+    ctx.fillRect(0, HUD_HEIGHT, FIELD.width, FIELD.height - HUD_HEIGHT);
+    // Checkerboard marble tiles.
+    const tile = 64;
+    for (let y = HUD_HEIGHT; y < FIELD.height; y += tile) {
+      for (let x = 0; x < FIELD.width; x += tile) {
+        if (((x / tile) + (y / tile)) % 2 === 0) {
+          ctx.fillStyle = FLOOR_B;
+          ctx.fillRect(x, y, tile, tile);
+        }
       }
     }
-    // Velvet rugs (shadow: safer to cross).
-    for (const rug of RUGS) {
-      ctx.fillStyle = PALETTE.rug;
+    // Rugs: deep red, gold border.
+    for (const rug of state.def.rugs) {
+      ctx.fillStyle = RUG;
       ctx.fillRect(rug.x, rug.y, rug.w, rug.h);
-      ctx.strokeStyle = PALETTE.rugTrim;
-      ctx.lineWidth = 4;
+      ctx.strokeStyle = 'rgba(245, 197, 66, 0.45)';
+      ctx.lineWidth = 3;
       ctx.strokeRect(rug.x + 6, rug.y + 6, rug.w - 12, rug.h - 12);
     }
-    // Lamp pools (lamplight: easier to spot).
-    for (const lamp of LAMPS) {
-      const grad = ctx.createRadialGradient(lamp.x, lamp.y, 6, lamp.x, lamp.y, lamp.r);
-      grad.addColorStop(0, 'rgba(255, 200, 110, 0.22)');
-      grad.addColorStop(1, 'rgba(255, 200, 110, 0)');
-      ctx.fillStyle = grad;
-      ctx.beginPath();
-      ctx.arc(lamp.x, lamp.y, lamp.r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#ffcf7a';
-      ctx.beginPath();
-      ctx.arc(lamp.x, lamp.y, 5, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    // Vault room floor + steel door.
-    ctx.fillStyle = PALETTE.vault;
-    ctx.fillRect(504, 24, 272, 192);
-    ctx.strokeStyle = PALETTE.vaultDoor;
-    ctx.lineWidth = 3;
-    ctx.strokeRect(504, 24, 272, 192);
-    ctx.fillStyle = PALETTE.vaultDoor;
-    ctx.font = 'bold 15px ' + FONT;
-    ctx.textAlign = 'center';
-    ctx.fillText('V A U L T', 640, 200);
   }
 
-  function drawWalls() {
-    for (const wall of WALLS) {
-      ctx.fillStyle = PALETTE.wall;
+  function drawWalls(state) {
+    for (const wall of state.walls) {
+      ctx.fillStyle = WALL;
       ctx.fillRect(wall.x, wall.y, wall.w, wall.h);
-      ctx.fillStyle = PALETTE.wallTop;
+      ctx.fillStyle = WALL_TOP;
       ctx.fillRect(wall.x, wall.y, wall.w, 4);
     }
-    // Display-case glass glints on the two gallery cases.
-    ctx.fillStyle = PALETTE.caseGlass;
-    ctx.fillRect(150, 300, 130, 54);
-    ctx.fillRect(1000, 300, 130, 54);
-  }
-
-  function drawVan(t) {
-    // The getaway van waiting at the open door, engine idling.
-    const jiggle = Math.sin(t * 30) * 1;
-    ctx.fillStyle = PALETTE.vanDark;
-    ctx.fillRect(VAN.x - 8, VAN.y - 6, VAN.w + 16, VAN.h + 6);
-    ctx.fillStyle = PALETTE.van;
-    ctx.fillRect(VAN.x, VAN.y + jiggle * 0.2, VAN.w, VAN.h - 14);
-    ctx.fillStyle = '#2a2118';
-    ctx.fillRect(VAN.x + 8, VAN.y + 8, 30, 20);
-    ctx.fillStyle = '#e8f4ff';
-    ctx.fillRect(VAN.x + 12, VAN.y + 12, 22, 12);
-    ctx.fillStyle = PALETTE.text;
-    ctx.font = 'bold 13px ' + FONT;
-    ctx.textAlign = 'center';
-    ctx.fillText('GETAWAY VAN', VAN.x + VAN.w / 2, VAN.y - 12);
-  }
-
-  function drawPlayer(p, t) {
-    // The thief: dark teal, mask stripe, a soft ring while sneaking.
-    if (p.sneaking) {
-      ctx.strokeStyle = 'rgba(47, 212, 196, 0.5)';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.radius + 7, 0, Math.PI * 2);
-      ctx.stroke();
+    // Display cases: glass-topped blocks the thief can hide behind.
+    for (const block of state.def.walls.filter((w) => w.w === 70)) {
+      ctx.fillStyle = 'rgba(140, 190, 230, 0.25)';
+      ctx.fillRect(block.x + 4, block.y + 4, block.w - 8, block.h - 8);
     }
-    ctx.fillStyle = PALETTE.thiefDark;
+  }
+
+  function drawExit(state) {
+    const exit = state.def.exit;
+    const glow = 0.5 + 0.3 * Math.sin(state.time * 3);
+    ctx.fillStyle = `rgba(46, 204, 113, ${0.75 + glow * 0.2})`;
+    ctx.fillRect(exit.x, exit.y, exit.w, exit.h);
+    ctx.fillStyle = '#0d3b1e';
+    ctx.font = 'bold 20px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('EXIT', exit.x + exit.w / 2, exit.y + exit.h / 2);
+  }
+
+  function drawLoot(state) {
+    const loot = state.def.loot;
+    if (state.lootTaken) {
+      ctx.fillStyle = '#3a4360';
+      ctx.fillRect(loot.x - 22, loot.y - 10, 44, 20);
+      return;
+    }
+    const pulse = 0.6 + 0.4 * Math.sin(state.time * 3);
+    const glow = ctx.createRadialGradient(loot.x, loot.y, 4, loot.x, loot.y, 60);
+    glow.addColorStop(0, `rgba(245, 197, 66, ${0.55 * pulse})`);
+    glow.addColorStop(1, 'rgba(245, 197, 66, 0)');
+    ctx.fillStyle = glow;
     ctx.beginPath();
-    ctx.arc(p.x, p.y, p.radius + 2, 0, Math.PI * 2);
+    ctx.arc(loot.x, loot.y, 60, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = PALETTE.thief;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, p.radius - 2, 0, Math.PI * 2);
-    ctx.fill();
-    // Mask stripe across the eyes, facing the way they move.
-    ctx.strokeStyle = '#0d2b28';
-    ctx.lineWidth = 5;
-    const fx = Math.cos(p.facing);
-    const fy = Math.sin(p.facing);
-    ctx.beginPath();
-    ctx.moveTo(p.x - fy * 8, p.y + fx * 8);
-    ctx.lineTo(p.x + fy * 8, p.y - fx * 8);
-    ctx.stroke();
-    // Little feet shuffle while moving.
-    if (p.moving) {
-      ctx.fillStyle = PALETTE.thiefDark;
-      const s = Math.sin(t * 14) * 4;
+    // Pedestal, then the prize itself: a cut gem.
+    ctx.fillStyle = '#2c3550';
+    ctx.fillRect(loot.x - 22, loot.y - 8, 44, 18);
+    ctx.save();
+    ctx.translate(loot.x, loot.y - 14);
+    ctx.rotate(Math.PI / 4);
+    ctx.fillStyle = GOLD;
+    ctx.fillRect(-11, -11, 22, 22);
+    ctx.strokeStyle = '#fff3c4';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(-11, -11, 22, 22);
+    ctx.restore();
+    ctx.fillStyle = GOLD;
+    ctx.font = 'bold 13px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(loot.name.toUpperCase(), loot.x, loot.y + 34);
+  }
+
+  function drawSmoke(state) {
+    for (const smoke of state.smokes) {
+      if (state.time >= smoke.until) continue;
+      const left = smoke.until - state.time;
+      const alpha = Math.min(0.55, left * 0.2);
+      const gradient = ctx.createRadialGradient(smoke.x, smoke.y, 10, smoke.x, smoke.y, 95);
+      gradient.addColorStop(0, `rgba(200, 205, 215, ${alpha})`);
+      gradient.addColorStop(1, 'rgba(200, 205, 215, 0)');
+      ctx.fillStyle = gradient;
       ctx.beginPath();
-      ctx.arc(p.x - fx * 10 - fy * s, p.y - fy * 10 + fx * s, 3, 0, Math.PI * 2);
+      ctx.arc(smoke.x, smoke.y, 95, 0, Math.PI * 2);
       ctx.fill();
     }
   }
 
-  function drawHud(state) {
-    const pad = 14;
-    ctx.fillStyle = PALETTE.hud;
-    ctx.fillRect(0, 0, FIELD.width, 46);
-    ctx.strokeStyle = PALETTE.hudEdge;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(0, 46);
-    ctx.lineTo(FIELD.width, 46);
-    ctx.stroke();
-
-    // Alarm meter.
-    ctx.fillStyle = PALETTE.muted;
-    ctx.font = 'bold 13px ' + FONT;
-    ctx.textAlign = 'left';
-    ctx.fillText('ALARM', pad, 19);
-    const barX = 78;
-    const barW = 260;
-    ctx.fillStyle = '#2a1420';
-    ctx.fillRect(barX, 8, barW, 16);
-    const alarmFrac = state.alarm / 100;
-    ctx.fillStyle = alarmFrac > 0.66 ? '#ff3b3b' : alarmFrac > 0.33 ? '#ff9a2e' : '#57d977';
-    ctx.fillRect(barX, 8, barW * alarmFrac, 16);
-    ctx.strokeStyle = PALETTE.hudEdge;
-    ctx.strokeRect(barX, 8, barW, 16);
-    ctx.fillStyle = PALETTE.text;
-    ctx.font = '12px ' + FONT;
-    ctx.fillText(Math.floor(state.alarm) + '%', barX + barW + 8, 20);
-
-    // Heat word.
-    ctx.fillStyle = state.heat === 'alarmed' ? PALETTE.danger : state.heat === 'suspicious' ? '#ff9a2e' : PALETTE.good;
-    ctx.font = 'bold 13px ' + FONT;
-    ctx.fillText(state.heat.toUpperCase(), barX + barW + 62, 19);
-
-    // Loot tally.
-    const lootTotal = state.loot.length;
-    const lootGot = state.loot.filter((l) => l.taken).length;
-    ctx.fillStyle = PALETTE.loot;
-    ctx.font = 'bold 14px ' + FONT;
-    ctx.textAlign = 'left';
-    ctx.fillText('◆ LOOT ' + lootGot + '/' + lootTotal, 560, 20);
-
-    // Tools.
-    ctx.fillStyle = PALETTE.text;
-    ctx.font = '13px ' + FONT;
-    ctx.fillText('Coins (Q/click): ' + state.coinsLeft + '   EMP (E): ' + state.empsLeft, 700, 20);
-
-    // Objective.
-    ctx.fillStyle = PALETTE.muted;
-    ctx.textAlign = 'right';
-    ctx.fillText(
-      state.mainTaken ? 'Get to the getaway van!' : 'Steal the Starlight Diamond',
-      FIELD.width - pad, 20,
-    );
-    ctx.textAlign = 'left';
-
-    // Score + time, second row.
-    ctx.fillStyle = PALETTE.muted;
-    ctx.font = '12px ' + FONT;
-    const mm = String(Math.floor(state.elapsed / 60)).padStart(2, '0');
-    const ss = String(Math.floor(state.elapsed % 60)).padStart(2, '0');
-    ctx.fillText('SCORE ' + state.score + '    TIME ' + mm + ':' + ss, pad, 38);
-
-    // Sneak hint while sneaking.
-    if (state.player.sneaking) {
-      ctx.fillStyle = PALETTE.thief;
-      ctx.font = 'bold 12px ' + FONT;
-      ctx.fillText('SNEAKING — harder to spot, slower to move', 560, 38);
+  function drawGuards(state) {
+    for (const guard of state.guards) {
+      cone(ctx, guard.x, guard.y, guard.facing, GUARD.range, GUARD.halfAngle,
+        guard.spotting > 0 ? CONE_ALERT : CONE_GUARD);
     }
+    for (const guard of state.guards) {
+      ctx.beginPath();
+      ctx.arc(guard.x, guard.y, GUARD.radius, 0, Math.PI * 2);
+      ctx.fillStyle = guard.chasing ? '#8a2f2f' : '#3a4a6b';
+      ctx.fill();
+      ctx.strokeStyle = '#dfe6f5';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      // Facing tick, like a torch beam's source.
+      ctx.beginPath();
+      ctx.moveTo(guard.x, guard.y);
+      ctx.lineTo(guard.x + Math.cos(guard.facing) * 22, guard.y + Math.sin(guard.facing) * 22);
+      ctx.strokeStyle = '#ffe9a8';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      if (guard.chasing) {
+        ctx.fillStyle = '#ff5a5a';
+        ctx.font = 'bold 26px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('!', guard.x, guard.y - 26);
+      } else if (guard.suspicion > 0.35) {
+        ctx.fillStyle = '#ffd166';
+        ctx.font = 'bold 22px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('?', guard.x, guard.y - 26);
+      }
+    }
+  }
+
+  function drawCameras(state) {
+    for (const camera of state.cameras) {
+      const disabled = state.time < camera.disabledUntil;
+      if (!disabled) cone(ctx, camera.x, camera.y, camera.angle, CAMERA.range, CAMERA.halfAngle,
+        camera.spotting > 0 ? CONE_ALERT : CONE_CAMERA);
+    }
+    for (const camera of state.cameras) {
+      const disabled = state.time < camera.disabledUntil;
+      ctx.beginPath();
+      ctx.arc(camera.x, camera.y, 10, 0, Math.PI * 2);
+      ctx.fillStyle = disabled ? '#555f75' : '#22304a';
+      ctx.fill();
+      ctx.strokeStyle = disabled ? '#888' : (camera.spotting > 0 ? '#ff5a5a' : '#7fd4ff');
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(camera.x, camera.y, 3, 0, Math.PI * 2);
+      ctx.fillStyle = disabled ? '#888' : '#ff5a5a';
+      ctx.fill();
+    }
+  }
+
+  function drawThief(state) {
+    const thief = state.thief;
+    // A clicked destination shows as a small marker on the floor.
+    if (thief.moveTarget) {
+      ctx.beginPath();
+      ctx.arc(thief.moveTarget.x, thief.moveTarget.y, 7, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(224, 138, 60, 0.8)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+    if (thief.sneaking) {
+      ctx.beginPath();
+      ctx.arc(thief.x, thief.y, THIEF.radius + 6, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(224, 138, 60, 0.35)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+    // Hooded fox: copper cloak, dark hood, one pale ear.
+    ctx.beginPath();
+    ctx.arc(thief.x, thief.y, THIEF.radius, 0, Math.PI * 2);
+    ctx.fillStyle = '#e08a3c';
+    ctx.fill();
+    ctx.strokeStyle = '#2b1a0c';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(thief.x, thief.y, 8, 0, Math.PI * 2);
+    ctx.fillStyle = '#2b1a0c';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(thief.x, thief.y);
+    ctx.lineTo(thief.x + Math.cos(thief.facing) * 20, thief.y + Math.sin(thief.facing) * 20);
+    ctx.strokeStyle = '#ffe9a8';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+  }
+
+  function drawHud(state, screen, best) {
+    ctx.fillStyle = '#0b0f1c';
+    ctx.fillRect(0, 0, FIELD.width, HUD_HEIGHT);
+    ctx.fillStyle = '#2c3550';
+    ctx.fillRect(0, HUD_HEIGHT - 2, FIELD.width, 2);
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#eef1f5';
+    ctx.font = 'bold 17px system-ui, sans-serif';
+    ctx.fillText(state.def.name, 18, 22);
+    ctx.font = '15px system-ui, sans-serif';
+    ctx.fillStyle = '#9aa7c7';
+    ctx.fillText(`${state.def.room}   ·   ${formatTime(state.time)}   ·   Score ${state.score}   ·   Best ${best}`, 18, 46);
+
+    // Alarm meter: the bar the whole game is about.
+    const meterX = 760;
+    const meterW = 300;
+    ctx.fillStyle = '#9aa7c7';
+    ctx.font = 'bold 14px system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    const alarmLabel = state.alarm > 70 && Math.sin(state.time * 10) > 0 ? '#ff4d4d' : '#9aa7c7';
+    ctx.fillStyle = alarmLabel;
+    ctx.fillText(`ALARM  ${Math.round(state.alarm)}%`, meterX, 22);
+    ctx.fillStyle = '#1c2438';
+    ctx.fillRect(meterX, 34, meterW, 16);
+    const ratio = state.alarm / 100;
+    const alarmColor = state.alarm > 70 ? '#ff4d4d' : state.alarm > 35 ? '#ffb13d' : '#3ddc84';
+    ctx.fillStyle = alarmColor;
+    ctx.fillRect(meterX, 34, meterW * ratio, 16);
+    ctx.strokeStyle = '#4a5878';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(meterX, 34, meterW, 16);
+
+    ctx.textAlign = 'right';
+    ctx.fillStyle = state.lootTaken ? GOLD : '#9aa7c7';
+    ctx.font = 'bold 14px system-ui, sans-serif';
+    ctx.fillText(state.lootTaken ? `◆ ${state.def.loot.name} secured` : `◆ ${state.def.loot.name} — grab it (E)`, FIELD.width - 18, 22);
+    ctx.fillStyle = '#9aa7c7';
+    ctx.font = '14px system-ui, sans-serif';
+    ctx.fillText(`Q smoke ×${state.tools.smoke} (−${150})    F EMP ×${state.tools.emp} (−${200})`, FIELD.width - 18, 46);
+    ctx.textAlign = 'left';
   }
 
   function panel(title, lines, accent) {
-    ctx.fillStyle = 'rgba(10, 14, 26, 0.82)';
+    ctx.fillStyle = 'rgba(6, 9, 18, 0.78)';
     ctx.fillRect(0, 0, FIELD.width, FIELD.height);
-    ctx.fillStyle = PALETTE.hud;
+    ctx.fillStyle = '#141a2b';
     ctx.strokeStyle = accent;
     ctx.lineWidth = 3;
-    const w = 640;
-    const h = 120 + lines.length * 30;
-    const x = (FIELD.width - w) / 2;
-    const y = (FIELD.height - h) / 2;
-    ctx.fillRect(x, y, w, h);
-    ctx.strokeRect(x, y, w, h);
-    ctx.fillStyle = accent;
-    ctx.font = 'bold 34px ' + FONT;
+    const boxW = 640;
+    const boxH = 120 + lines.length * 34;
+    const boxX = (FIELD.width - boxW) / 2;
+    const boxY = (FIELD.height - boxH) / 2;
+    ctx.fillRect(boxX, boxY, boxW, boxH);
+    ctx.strokeRect(boxX, boxY, boxW, boxH);
     ctx.textAlign = 'center';
-    ctx.fillText(title, FIELD.width / 2, y + 58);
-    ctx.fillStyle = PALETTE.text;
-    ctx.font = '17px ' + FONT;
-    lines.forEach((line, i) => {
-      ctx.fillText(line, FIELD.width / 2, y + 102 + i * 30);
+    ctx.fillStyle = accent;
+    ctx.font = 'bold 44px system-ui, sans-serif';
+    ctx.fillText(title, FIELD.width / 2, boxY + 62);
+    ctx.fillStyle = '#eef1f5';
+    ctx.font = '18px system-ui, sans-serif';
+    lines.forEach((line, index) => {
+      ctx.fillText(line, FIELD.width / 2, boxY + 116 + index * 34);
     });
-    ctx.fillStyle = PALETTE.muted;
-    ctx.font = '14px ' + FONT;
-    ctx.fillText('Press R to run it back', FIELD.width / 2, y + h - 18);
   }
 
-  function draw(state, screen, best, t) {
+  function draw(screen, state, best) {
     ctx.clearRect(0, 0, FIELD.width, FIELD.height);
-    drawFloor(t);
-    // Cones first (under the people), then the solid world.
-    for (const c of state.cameras) drawCamera(ctx, c);
-    for (const g of state.guards) drawGuard(ctx, g, t);
-    drawWalls();
-    drawVan(t);
-    for (const item of state.loot) {
-      if (!item.taken) drawLoot(ctx, item, t);
-    }
-    for (const coin of state.coins) {
-      ctx.fillStyle = PALETTE.loot;
-      ctx.beginPath();
-      ctx.arc(coin.x, coin.y, 6, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(255, 217, 77, 0.6)';
-      ctx.beginPath();
-      ctx.arc(coin.x, coin.y, 10 + Math.sin(t * 10) * 2, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-    drawPlayer(state.player, t);
-    drawHud(state);
+    drawFloor(state);
+    drawExit(state);
+    drawLoot(state);
+    drawSmoke(state);
+    drawGuards(state);
+    drawCameras(state);
+    drawThief(state);
+    drawHud(state, screen, best);
 
     if (screen === SCREEN_TITLE) {
-      panel('MIDNIGHT GETAWAY', [
-        'You are Rook. The Halcyon Museum. One night. One diamond.',
-        'Slip past Bram, Celia and Dmitri — and the cameras —',
-        'pocket the Starlight Diamond, then reach the getaway van.',
-        'WASD / arrows move · Shift sneak · Q or click toss a coin · E EMP the cameras',
-        'R restart · P pause · M mute',
-      ], PALETTE.thief);
-    } else if (screen === SCREEN_PAUSED) {
-      panel('PAUSED', ['The museum waits. The guards do not — not really.', 'P or Space to keep moving.'], PALETTE.muted);
-    } else if (screen === SCREEN_WIN) {
-      panel('CLEAN GETAWAY!', [
-        'The Starlight Diamond is yours. The van pulls away into the night.',
-        'Score ' + state.score + '   ·   Best ' + Math.max(best, state.score) + '   ·   Time ' +
-          Math.floor(state.elapsed / 60) + ':' + String(Math.floor(state.elapsed % 60)).padStart(2, '0'),
-        'Loot ' + state.loot.filter((l) => l.taken).length + '/' + state.loot.length +
-          '   ·   Alarm peaked at ' + Math.floor(state.alarm) + '%',
-      ], PALETTE.good);
-    } else if (screen === SCREEN_CAUGHT) {
-      panel('BUSTED!', [
-        state.catchReason || 'The museum locked down.',
-        'Score ' + state.score + '   ·   Best ' + best,
-        'The cones sweep on. Plan the route, then run it again.',
-      ], PALETTE.danger);
-    }
-
-    // Alarm vignette: the hotter it gets, the redder the edges.
-    if (state.alarm > 25 && screen === SCREEN_PLAY) {
-      const a = Math.min(0.35, (state.alarm - 25) / 100 * 0.5) * (0.7 + 0.3 * Math.sin(t * 6));
-      const grad = ctx.createRadialGradient(640, 400, 260, 640, 400, 720);
-      grad.addColorStop(0, 'rgba(255, 40, 40, 0)');
-      grad.addColorStop(1, 'rgba(255, 40, 40, ' + a.toFixed(3) + ')');
-      ctx.fillStyle = grad;
+      ctx.fillStyle = 'rgba(6, 9, 18, 0.82)';
       ctx.fillRect(0, 0, FIELD.width, FIELD.height);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = GOLD;
+      ctx.font = 'bold 84px system-ui, sans-serif';
+      ctx.fillText('COPPER FOX', FIELD.width / 2, 250);
+      ctx.fillStyle = '#eef1f5';
+      ctx.font = '28px system-ui, sans-serif';
+      ctx.fillText('The Midnight Heist', FIELD.width / 2, 300);
+      ctx.font = '18px system-ui, sans-serif';
+      ctx.fillStyle = '#c7d0e4';
+      const lines = [
+        'Three rooms. Three prizes. One fox in the dark.',
+        '',
+        'WASD / arrows — move      Shift — sneak (slower, harder to spot)',
+        'Click the floor — walk there      E — grab the loot      Q — smoke pellet      F — EMP burst',
+        'Tools cost score. Guards chase what they see. Cameras never blink.',
+        'Grab the loot, reach the green EXIT, and vanish before the alarm hits 100%.',
+        '',
+        'Press Enter or click to begin.',
+      ];
+      lines.forEach((line, index) => {
+        ctx.fillText(line, FIELD.width / 2, 360 + index * 30);
+      });
+      if (best > 0) {
+        ctx.fillStyle = GOLD;
+        ctx.font = 'bold 18px system-ui, sans-serif';
+        ctx.fillText(`Best score: ${best}`, FIELD.width / 2, 360 + lines.length * 30 + 10);
+      }
+    } else if (screen === SCREEN_PAUSED) {
+      panel('PAUSED', ['Press P or Enter to keep stealing.'], '#9aa7c7');
+    } else if (screen === SCREEN_CLEARED) {
+      const last = state.index + 1 >= 3;
+      panel(last ? 'ALL THREE HEISTS DONE' : 'HEIST COMPLETE', [
+        `${state.def.loot.name} — secured.`,
+        `Time ${formatTime(state.time)}   ·   time bonus +${state.timeBonus || 0}   ·   ghost bonus +${state.stealthBonus || 0}`,
+        `Score ${state.score}`,
+        last ? 'Press Enter to see the getaway.' : 'Press Enter for the next heist.',
+      ], GOLD);
+    } else if (screen === SCREEN_BUSTED) {
+      panel('BUSTED!', [
+        state.bustReason,
+        `Score ${state.score}   ·   Best ${best}`,
+        'Press Enter to try this heist again.',
+      ], '#ff4d4d');
+    } else if (screen === SCREEN_COMPLETE) {
+      panel('THE FOX VANISHES', [
+        'Three rooms, three prizes, no alarms left ringing.',
+        `Final score ${state.score}   ·   Best ${best}`,
+        'Press Enter to run the heists again.',
+      ], GOLD);
     }
   }
 
