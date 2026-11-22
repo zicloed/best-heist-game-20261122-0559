@@ -1,387 +1,299 @@
-// Midnight Getaway — the rules and state, with no drawing and no browser in it:
-// the thief, the patrolling guards, the sweeping cameras, the loot, the tools,
-// the alarm meter and the win / caught conditions. step() advances one fixed
-// step and returns what happened as bit flags, so the caller can react without
-// the world knowing about screens or sound.
+// Copper Fox — the rules and state, with no drawing and no browser in it: the
+// thief, the patrolling guards, the sweeping cameras, the loot, the tools, the
+// alarm meter and the clear / busted conditions. step() advances one fixed step
+// and returns what happened as bit flags, so the caller can react without the
+// world knowing about screens or sound.
+import { ALARM, CAMERA, FIELD, GUARD, LEVELS, THIEF, TOOLS } from './config.js';
+import { buildLevel } from './level.js';
 
-import {
-  ALARM, CAMERA, CAMERAS, FIELD, GUARD, GUARDS, LAMPS, LOOT, PLAYER, RUGS,
-  SCORE, SPOT, TOOLS, VAN, WALLS,
-} from './config.js';
+export const EVENT_LOOT = 1;
+export const EVENT_CLEAR = 2;
+export const EVENT_BUSTED = 4;
+export const EVENT_SPOTTED = 8;
+export const EVENT_TOOL = 16;
 
-export const EVENT_PICKUP = 1;
-export const EVENT_COIN = 2;
-export const EVENT_EMP = 4;
-export const EVENT_WIN = 8;
-export const EVENT_CAUGHT = 16;
-export const EVENT_SPOTTED = 32; // a guard or camera just crossed into chase
-export const EVENT_STARE = 64; // a guard just crossed into stare
-
-function clamp(v, lo, hi) {
-  return v < lo ? lo : v > hi ? hi : v;
-}
-
-function dist(ax, ay, bx, by) {
-  return Math.hypot(ax - bx, ay - by);
-}
-
-/** Smallest absolute angle between two headings, 0..PI. */
-function angleDiff(a, b) {
-  let d = a - b;
-  while (d > Math.PI) d -= 2 * Math.PI;
-  while (d < -Math.PI) d += 2 * Math.PI;
-  return Math.abs(d);
-}
-
-function pointInRect(x, y, r) {
-  return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
-}
-
-/** Does the segment (x1,y1)-(x2,y2) cross rectangle r? (samples + edge tests). */
-function segmentHitsRect(x1, y1, x2, y2, r) {
-  if (pointInRect(x1, y1, r) || pointInRect(x2, y2, r)) return true;
-  const edges = [
-    [r.x, r.y, r.x + r.w, r.y],
-    [r.x + r.w, r.y, r.x + r.w, r.y + r.h],
-    [r.x + r.w, r.y + r.h, r.x, r.y + r.h],
-    [r.x, r.y + r.h, r.x, r.y],
-  ];
-  for (const [ax, ay, bx, by] of edges) {
-    const d1 = (bx - ax) * (y1 - ay) - (by - ay) * (x1 - ax);
-    const d2 = (bx - ax) * (y2 - ay) - (by - ay) * (x2 - ax);
-    const d3 = (x2 - x1) * (by - ay) - (y2 - y1) * (bx - ax);
-    const d4 = (x2 - x1) * (ay - y1) - (y2 - y1) * (ax - x1);
-    if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return true;
-  }
-  return false;
-}
-
-/** True when no wall stands between the two points. */
-function hasLineOfSight(x1, y1, x2, y2) {
-  for (const wall of WALLS) {
-    if (segmentHitsRect(x1, y1, x2, y2, wall)) return false;
+/** Does the segment (x1,y1)-(x2,y2) cross the rectangle? */
+export function segmentHitsRect(x1, y1, x2, y2, rect) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  let low = 0;
+  let high = 1;
+  for (const [origin, delta, min, max] of [
+    [x1, dx, rect.x, rect.x + rect.w],
+    [y1, dy, rect.y, rect.y + rect.h],
+  ]) {
+    if (Math.abs(delta) < 1e-9) {
+      if (origin < min || origin > max) return false;
+    } else {
+      let enter = (min - origin) / delta;
+      let exit = (max - origin) / delta;
+      if (enter > exit) [enter, exit] = [exit, enter];
+      low = Math.max(low, enter);
+      high = Math.min(high, exit);
+      if (low > high) return false;
+    }
   }
   return true;
 }
 
-/** Push a circle out of every wall it overlaps (axis-separated, so corners slide). */
-function collideCircle(body, radius) {
-  for (const wall of WALLS) {
-    const cx = clamp(body.x, wall.x, wall.x + wall.w);
-    const cy = clamp(body.y, wall.y, wall.y + wall.h);
-    const dx = body.x - cx;
-    const dy = body.y - cy;
-    const d2 = dx * dx + dy * dy;
-    if (d2 < radius * radius) {
-      if (d2 > 0.0001) {
-        const d = Math.sqrt(d2);
-        body.x = cx + (dx / d) * radius;
-        body.y = cy + (dy / d) * radius;
-      } else {
-        // Centre inside the wall: push out along the smallest penetration.
-        const left = body.x - wall.x;
-        const right = wall.x + wall.w - body.x;
-        const top = body.y - wall.y;
-        const bottom = wall.y + wall.h - body.y;
-        const m = Math.min(left, right, top, bottom);
-        if (m === left) body.x = wall.x - radius;
-        else if (m === right) body.x = wall.x + wall.w + radius;
-        else if (m === top) body.y = wall.y - radius;
-        else body.y = wall.y + wall.h + radius;
-      }
-    }
+/** Is the line of sight between two points blocked by any wall? */
+export function blockedByWall(x1, y1, x2, y2, walls) {
+  for (const wall of walls) {
+    if (segmentHitsRect(x1, y1, x2, y2, wall)) return true;
   }
-  body.x = clamp(body.x, PLAYER.radius, FIELD.width - PLAYER.radius);
-  body.y = clamp(body.y, PLAYER.radius, FIELD.height - PLAYER.radius);
+  return false;
 }
 
-export function createWorld() {
-  const player = {
-    x: PLAYER.startX, y: PLAYER.startY, radius: PLAYER.radius,
-    facing: -Math.PI / 2, sneaking: false, moving: false,
-  };
-
-  const guards = GUARDS.map((g) => ({
-    name: g.name,
-    x: g.x, y: g.y, radius: GUARD.radius,
-    waypoints: g.waypoints.map((w) => ({ ...w })),
-    waypointIndex: 1,
-    angle: Math.PI / 2,
-    state: 'patrol', // patrol | stare | chase | investigate
-    suspicion: 0,
-    lostSight: 0,
-    investigateX: 0, investigateY: 0, investigateTimer: 0,
-    waitTimer: 0,
-  }));
-
-  const cameras = CAMERAS.map((c) => ({
-    x: c.x, y: c.y, baseAngle: c.baseAngle, phase: c.phase,
-    angle: c.baseAngle, suspicion: 0, disabled: 0,
-  }));
-
-  const loot = [
-    { ...LOOT.main, taken: false, main: true },
-    ...LOOT.side.map((l) => ({ ...l, taken: false, main: false })),
-  ];
-
-  const coins = []; // tossed coins lying on the floor, still clinking
-
-  const state = {
-    player, guards, cameras, loot, coins,
-    alarm: 0,
-    score: 0,
-    elapsed: 0,
-    coinsLeft: TOOLS.coins,
-    empsLeft: TOOLS.emps,
-    mainTaken: false,
-    sideTaken: 0,
-    won: false,
-    caught: false,
-    catchReason: '',
-    /** the loudest observer right now, for the HUD: 'calm' | 'suspicious' | 'alarmed'. */
-    heat: 'calm',
-  };
-
-  function reset() {
-    player.x = PLAYER.startX;
-    player.y = PLAYER.startY;
-    player.facing = -Math.PI / 2;
-    player.sneaking = false;
-    player.moving = false;
-    guards.forEach((g, i) => {
-      g.x = GUARDS[i].x;
-      g.y = GUARDS[i].y;
-      g.waypointIndex = 1;
-      g.angle = Math.PI / 2;
-      g.state = 'patrol';
-      g.suspicion = 0;
-      g.lostSight = 0;
-      g.investigateTimer = 0;
-      g.waitTimer = 0;
-    });
-    cameras.forEach((c, i) => {
-      c.angle = CAMERAS[i].baseAngle;
-      c.suspicion = 0;
-      c.disabled = 0;
-    });
-    for (const item of loot) item.taken = false;
-    coins.length = 0;
-    state.alarm = 0;
-    state.score = 0;
-    state.elapsed = 0;
-    state.coinsLeft = TOOLS.coins;
-    state.empsLeft = TOOLS.emps;
-    state.mainTaken = false;
-    state.sideTaken = 0;
-    state.won = false;
-    state.caught = false;
-    state.catchReason = '';
-    state.heat = 'calm';
-  }
-
-  /** How exposed the thief is right now: rugs hide, lamplight exposes, sneaking hides. */
-  function exposure() {
-    let m = player.sneaking ? SPOT.sneak : 1;
-    for (const rug of RUGS) {
-      if (pointInRect(player.x, player.y, rug)) m *= SPOT.shadow;
+/** Is (x, y) inside any live smoke cloud? Smoke hides the thief completely. */
+export function insideSmoke(x, y, smokes, now) {
+  for (const smoke of smokes) {
+    if (now < smoke.until) {
+      const dx = x - smoke.x;
+      const dy = y - smoke.y;
+      if (dx * dx + dy * dy < TOOLS.smokeRadius * TOOLS.smokeRadius) return true;
     }
-    for (const lamp of LAMPS) {
-      if (dist(player.x, player.y, lamp.x, lamp.y) < lamp.r) m *= SPOT.lamplight;
-    }
-    return m;
+  }
+  return false;
+}
+
+/**
+ * How strongly a watcher at (x, y) facing `angle` sees the thief: 0 when out of
+ * range, out of the cone, behind a wall or hidden in smoke, up to 1 dead ahead
+ * and close. `sneak` halves it.
+ */
+export function sightStrength(x, y, angle, range, halfAngle, thief, walls, smokes, now, sneak) {
+  const dx = thief.x - x;
+  const dy = thief.y - y;
+  const dist = Math.hypot(dx, dy);
+  if (dist > range) return 0;
+  let diff = Math.atan2(dy, dx) - angle;
+  while (diff > Math.PI) diff -= Math.PI * 2;
+  while (diff < -Math.PI) diff += Math.PI * 2;
+  if (Math.abs(diff) > halfAngle) return 0;
+  if (blockedByWall(x, y, thief.x, thief.y, walls)) return 0;
+  if (insideSmoke(thief.x, thief.y, smokes, now)) return 0;
+  const strength = (1 - (dist / range) * 0.55) * (1 - (Math.abs(diff) / halfAngle) * 0.5);
+  return sneak ? strength * ALARM.sneakFactor : strength;
+}
+
+/** Move a circle by (dx, dy), sliding along walls instead of passing through. */
+export function moveCircle(body, radius, dx, dy, walls) {
+  const nextX = body.x + dx;
+  if (!circleHitsWalls(nextX, body.y, radius, walls)) body.x = nextX;
+  const nextY = body.y + dy;
+  if (!circleHitsWalls(body.x, nextY, radius, walls)) body.y = nextY;
+}
+
+export function circleHitsWalls(x, y, radius, walls) {
+  for (const wall of walls) {
+    const nearX = Math.max(wall.x, Math.min(x, wall.x + wall.w));
+    const nearY = Math.max(wall.y, Math.min(y, wall.y + wall.h));
+    const dx = x - nearX;
+    const dy = y - nearY;
+    if (dx * dx + dy * dy < radius * radius) return true;
+  }
+  return false;
+}
+
+export function createWorld(random) {
+  let levelIndex = 0;
+  let state = buildLevel(0, random);
+  let totalScore = 0;
+
+  function reset(nextLevel) {
+    levelIndex = nextLevel;
+    state = buildLevel(nextLevel, random);
+    state.score = totalScore;
   }
 
-  /** Can this observer see the thief? Returns 0..1 detection strength (0 = unseen). */
-  function seeStrength(ox, oy, angle, range, halfAngle) {
-    const d = dist(ox, oy, player.x, player.y);
-    if (d > range) return 0;
-    const toPlayer = Math.atan2(player.y - oy, player.x - ox);
-    if (angleDiff(toPlayer, angle) > halfAngle) return 0;
-    if (!hasLineOfSight(ox, oy, player.x, player.y)) return 0;
-    return 1 - (d / range) * 0.7; // closer = seen faster
+  function startOver() {
+    totalScore = 0;
+    reset(0);
   }
 
-  function moveGuard(g, dt, tx, ty, speed) {
-    const dx = tx - g.x;
-    const dy = ty - g.y;
-    const d = Math.hypot(dx, dy);
-    if (d < 2) return true;
-    const stepLen = Math.min(d, speed * dt);
-    g.x += (dx / d) * stepLen;
-    g.y += (dy / d) * stepLen;
-    g.angle = Math.atan2(dy, dx);
-    collideCircle(g, g.radius);
-    return d - stepLen < 2;
-  }
-
-  /**
-   * One fixed step. `input` is {x, y, sneak, coin, coinX, coinY, emp} where
-   * x/y is a -1..1 direction, coin asks for a toss toward (coinX, coinY) and
-   * emp asks for the EMP. Returns a bitmask of EVENT_* flags.
-   */
-  function step(dt, input) {
-    if (state.won || state.caught) return 0;
+  function step(dt, controls) {
+    if (state.status !== 'playing') return 0;
     let events = 0;
-    state.elapsed += dt;
+    state.time += dt;
+    const thief = state.thief;
+    const walls = state.walls;
 
-    // --- the thief moves ---
-    const len = Math.hypot(input.x, input.y);
-    player.sneaking = !!input.sneak;
-    player.moving = len > 0.01;
-    if (player.moving) {
-      const speed = player.sneaking ? PLAYER.sneakSpeed : PLAYER.walkSpeed;
-      const nx = input.x / (len || 1);
-      const ny = input.y / (len || 1);
-      player.x += nx * speed * dt;
-      player.y += ny * speed * dt;
-      player.facing = Math.atan2(ny, nx);
-      collideCircle(player, player.radius);
+    // --- the thief moves: keys first, otherwise toward a clicked target. ---
+    let dx = controls.dx;
+    let dy = controls.dy;
+    if (dx === 0 && dy === 0 && thief.moveTarget) {
+      const tx = thief.moveTarget.x - thief.x;
+      const ty = thief.moveTarget.y - thief.y;
+      const dist = Math.hypot(tx, ty);
+      if (dist < 10) thief.moveTarget = null;
+      else {
+        dx = tx / dist;
+        dy = ty / dist;
+      }
+    }
+    if (controls.target) thief.moveTarget = controls.target;
+    thief.sneaking = controls.sneak;
+    const speed = thief.sneaking ? THIEF.sneakSpeed : THIEF.walkSpeed;
+    const length = Math.hypot(dx, dy);
+    if (length > 0) {
+      const stepX = (dx / length) * speed * dt;
+      const stepY = (dy / length) * speed * dt;
+      moveCircle(thief, THIEF.radius, stepX, stepY, walls);
+      thief.facing = Math.atan2(dy, dx);
+      thief.moving = true;
+    } else {
+      thief.moving = false;
     }
 
-    // --- tools ---
-    if (input.coin && state.coinsLeft > 0) {
-      state.coinsLeft -= 1;
-      const tx = clamp(input.coinX ?? player.x + Math.cos(player.facing) * TOOLS.coinRange, 40, FIELD.width - 40);
-      const ty = clamp(input.coinY ?? player.y + Math.sin(player.facing) * TOOLS.coinRange, 40, FIELD.height - 40);
-      coins.push({ x: tx, y: ty, ttl: 1.2 });
-      for (const g of guards) {
-        if (g.state !== 'chase' && dist(g.x, g.y, tx, ty) < TOOLS.coinLureRadius) {
-          g.state = 'investigate';
-          g.investigateX = tx;
-          g.investigateY = ty;
-          g.investigateTimer = TOOLS.coinInvestigateSeconds;
-          g.suspicion = Math.min(g.suspicion, GUARD.stareAt - 0.05);
+    // --- tools, at a cost in score. ---
+    if (controls.smoke && state.tools.smoke > 0) {
+      state.tools.smoke -= 1;
+      state.score = Math.max(0, state.score - TOOLS.smokeCost);
+      state.smokes.push({ x: thief.x, y: thief.y, until: state.time + TOOLS.smokeSeconds });
+      events |= EVENT_TOOL;
+    }
+    if (controls.emp && state.tools.emp > 0) {
+      state.tools.emp -= 1;
+      state.score = Math.max(0, state.score - TOOLS.empCost);
+      for (const camera of state.cameras) camera.disabledUntil = state.time + TOOLS.empSeconds;
+      events |= EVENT_TOOL;
+    }
+
+    // --- cameras sweep; guards patrol, or chase a thief they have seen. ---
+    for (const camera of state.cameras) {
+      camera.angle = camera.baseAngle + Math.sin(state.time * camera.speed + camera.x * 0.01) * camera.sweep;
+    }
+    for (const guard of state.guards) {
+      const target = guard.waypoints[guard.leg];
+      const tx = target.x - guard.x;
+      const ty = target.y - guard.y;
+      const dist = Math.hypot(tx, ty);
+      if (guard.chasing) {
+        const seen = guard.lastSeen;
+        const sx = seen.x - guard.x;
+        const sy = seen.y - guard.y;
+        const sdist = Math.hypot(sx, sy);
+        if (sdist > 12) {
+          moveCircle(guard, GUARD.radius, (sx / sdist) * GUARD.chaseSpeed * dt, (sy / sdist) * GUARD.chaseSpeed * dt, walls);
+          guard.facing = Math.atan2(sy, sx);
+        } else if (state.time > guard.giveUpAt) {
+          guard.chasing = false;
+          guard.suspicion = 0;
         }
+      } else if (guard.waiting > 0) {
+        guard.waiting -= dt;
+      } else if (dist > 6) {
+        moveCircle(guard, GUARD.radius, (tx / dist) * GUARD.patrolSpeed * dt, (ty / dist) * GUARD.patrolSpeed * dt, walls);
+        guard.facing = Math.atan2(ty, tx);
+      } else {
+        guard.leg = (guard.leg + 1) % guard.waypoints.length;
+        guard.waiting = guard.pause;
       }
-      events |= EVENT_COIN;
-    }
-    if (input.emp && state.empsLeft > 0) {
-      state.empsLeft -= 1;
-      for (const c of cameras) {
-        c.disabled = TOOLS.empDisableSeconds;
-        c.suspicion = 0;
-      }
-      events |= EVENT_EMP;
-    }
-    for (let i = coins.length - 1; i >= 0; i -= 1) {
-      coins[i].ttl -= dt;
-      if (coins[i].ttl <= 0) coins.splice(i, 1);
     }
 
-    const expo = exposure();
-
-    // --- guards: see, suspect, chase ---
-    for (const g of guards) {
-      const strength = seeStrength(g.x, g.y, g.angle, GUARD.viewRange, GUARD.viewHalfAngle);
-      const before = g.suspicion;
+    // --- who sees the thief right now? ---
+    let strongest = 0;
+    let guardStrongest = 0;
+    let cameraStrongest = 0;
+    for (const guard of state.guards) {
+      const strength = sightStrength(
+        guard.x, guard.y, guard.facing, GUARD.range, GUARD.halfAngle,
+        thief, walls, state.smokes, state.time, thief.sneaking,
+      );
+      guard.spotting = strength;
       if (strength > 0) {
-        g.suspicion = Math.min(1, g.suspicion + SPOT.baseRate * strength * expo * dt);
-        g.lostSight = 0;
+        guard.suspicion = Math.min(1, guard.suspicion + strength * dt * 1.8);
+        guard.lastSeen = { x: thief.x, y: thief.y };
+        guard.giveUpAt = state.time + 4;
+        if (guard.suspicion > 0.65) guard.chasing = true;
       } else {
-        g.suspicion = Math.max(0, g.suspicion - (g.state === 'chase' ? SPOT.chaseDecayRate : SPOT.decayRate) * dt);
-        if (g.state === 'chase') g.lostSight += dt;
+        guard.suspicion = Math.max(0, guard.suspicion - dt * 0.35);
       }
-      if (before < GUARD.stareAt && g.suspicion >= GUARD.stareAt) events |= EVENT_STARE;
-      if (before < GUARD.chaseAt && g.suspicion >= GUARD.chaseAt) events |= EVENT_SPOTTED;
-
-      if (g.suspicion >= GUARD.chaseAt) {
-        g.state = 'chase';
-      } else if (g.state === 'chase' && g.lostSight > GUARD.giveUpSeconds) {
-        g.state = 'patrol';
-        g.suspicion = Math.min(g.suspicion, GUARD.stareAt);
-      } else if (g.state === 'stare' && g.suspicion < GUARD.stareAt) {
-        g.state = 'patrol';
-      } else if (g.state === 'patrol' && g.suspicion >= GUARD.stareAt) {
-        g.state = 'stare';
-      }
-
-      if (g.state === 'chase') {
-        moveGuard(g, dt, player.x, player.y, GUARD.chaseSpeed);
-        if (dist(g.x, g.y, player.x, player.y) < GUARD.touchRange) {
-          state.caught = true;
-          state.catchReason = `${g.name} grabbed you.`;
-          return events | EVENT_CAUGHT;
-        }
-      } else if (g.state === 'investigate') {
-        const arrived = moveGuard(g, dt, g.investigateX, g.investigateY, GUARD.investigateSpeed);
-        if (arrived || (g.investigateTimer -= dt) <= 0) {
-          g.state = 'patrol';
-          g.waitTimer = 1.2; // look around, then walk on
-        }
-      } else if (g.state === 'stare') {
-        // Freeze and stare at the thief: the fair warning before the chase.
-        g.angle = Math.atan2(player.y - g.y, player.x - g.x);
-      } else {
-        // Patrol: walk the waypoints, pausing at each corner to look around.
-        if (g.waitTimer > 0) {
-          g.waitTimer -= dt;
-          g.angle += dt * 0.6; // slow scan while waiting
-        } else {
-          const wp = g.waypoints[g.waypointIndex];
-          if (moveGuard(g, dt, wp.x, wp.y, GUARD.patrolSpeed)) {
-            g.waypointIndex = (g.waypointIndex + 1) % g.waypoints.length;
-            g.waitTimer = 0.8;
-          }
-        }
-      }
+      strongest = Math.max(strongest, strength);
+      guardStrongest = Math.max(guardStrongest, strength);
     }
-
-    // --- cameras: sweep, watch, raise the alarm ---
-    for (const c of cameras) {
-      if (c.disabled > 0) {
-        c.disabled -= dt;
-        c.suspicion = 0;
+    for (const camera of state.cameras) {
+      if (state.time < camera.disabledUntil) {
+        camera.spotting = 0;
         continue;
       }
-      c.angle = c.baseAngle + CAMERA.sweepAmplitude * Math.sin(state.elapsed * CAMERA.sweepSpeed + c.phase);
-      const before = c.suspicion;
-      const strength = seeStrength(c.x, c.y, c.angle, CAMERA.viewRange, CAMERA.viewHalfAngle);
-      if (strength > 0) {
-        c.suspicion = Math.min(1, c.suspicion + SPOT.baseRate * 0.9 * strength * expo * dt);
-      } else {
-        c.suspicion = Math.max(0, c.suspicion - SPOT.decayRate * dt);
-      }
-      if (before < GUARD.chaseAt && c.suspicion >= GUARD.chaseAt) events |= EVENT_SPOTTED;
+      const strength = sightStrength(
+        camera.x, camera.y, camera.angle, CAMERA.range, CAMERA.halfAngle,
+        thief, walls, state.smokes, state.time, thief.sneaking,
+      );
+      camera.spotting = strength;
+      strongest = Math.max(strongest, strength);
+      cameraStrongest = Math.max(cameraStrongest, strength);
     }
-
-    // --- the alarm meter: the shared heat of every observer ---
-    let top = 0;
-    for (const g of guards) top = Math.max(top, g.suspicion);
-    for (const c of cameras) top = Math.max(top, c.suspicion);
-    state.heat = top >= GUARD.chaseAt ? 'alarmed' : top >= GUARD.stareAt ? 'suspicious' : 'calm';
-    if (top > ALARM.riseAbove) {
-      state.alarm = Math.min(100, state.alarm + ALARM.riseRate * (top - ALARM.riseAbove) * dt);
+    state.spotted = strongest;
+    state.guardSpotting = guardStrongest;
+    state.cameraSpotting = cameraStrongest;
+    if (strongest > 0) {
+      state.alarm = Math.min(ALARM.bustAt, state.alarm + strongest * ALARM.risePerSecond * dt);
+      state.alarmPeak = Math.max(state.alarmPeak, state.alarm);
+      events |= EVENT_SPOTTED;
     } else {
-      state.alarm = Math.max(0, state.alarm - ALARM.decayRate * dt);
-    }
-    if (state.alarm >= 100) {
-      state.caught = true;
-      state.catchReason = 'The alarm hit 100% — the museum locked down.';
-      return events | EVENT_CAUGHT;
+      state.alarm = Math.max(0, state.alarm - ALARM.decayPerSecond * dt);
     }
 
-    // --- loot: walk over it to pocket it ---
-    for (const item of loot) {
-      if (item.taken) continue;
-      if (dist(player.x, player.y, item.x, item.y) < player.radius + item.r + 4) {
-        item.taken = true;
-        state.score += item.points;
-        if (item.main) state.mainTaken = true;
-        else state.sideTaken += 1;
-        events |= EVENT_PICKUP;
+    // --- caught by touch, or by a full alarm. ---
+    for (const guard of state.guards) {
+      const dx = thief.x - guard.x;
+      const dy = thief.y - guard.y;
+      if (dx * dx + dy * dy < GUARD.catchRadius * GUARD.catchRadius) {
+        state.status = 'busted';
+        state.bustReason = 'A guard grabbed you in the dark.';
+        return events | EVENT_BUSTED;
       }
     }
-
-    // --- the getaway ---
-    if (state.mainTaken && pointInRect(player.x, player.y, VAN)) {
-      state.won = true;
-      state.score += SCORE.winBonus - Math.floor(state.elapsed * SCORE.timePenaltyPerSecond);
-      return events | EVENT_WIN;
+    if (state.alarm >= ALARM.bustAt) {
+      state.status = 'busted';
+      state.bustReason = 'The alarm hit 100% — the museum locked down.';
+      return events | EVENT_BUSTED;
     }
 
+    // --- grab the loot, then reach the exit. ---
+    const loot = state.def.loot;
+    if (!state.lootTaken) {
+      const dx = thief.x - loot.x;
+      const dy = thief.y - loot.y;
+      if (dx * dx + dy * dy < THIEF.grabRange * THIEF.grabRange && controls.interact) {
+        state.lootTaken = true;
+        state.score += loot.value;
+        events |= EVENT_LOOT;
+      }
+    } else {
+      const exit = state.def.exit;
+      if (thief.x > exit.x && thief.x < exit.x + exit.w && thief.y > exit.y && thief.y < exit.y + exit.h) {
+        const timeBonus = Math.max(0, 600 - Math.round(state.time) * 5);
+        const stealthBonus = Math.round((100 - state.alarmPeak) * 2);
+        state.score += timeBonus + stealthBonus;
+        state.timeBonus = timeBonus;
+        state.stealthBonus = stealthBonus;
+        totalScore = state.score;
+        state.status = 'cleared';
+        events |= EVENT_CLEAR;
+      }
+    }
     return events;
   }
 
-  reset();
-  return { state, reset, step };
+  return {
+    get state() {
+      return state;
+    },
+    get levelIndex() {
+      return levelIndex;
+    },
+    get levelCount() {
+      return LEVELS.length;
+    },
+    get totalScore() {
+      return totalScore;
+    },
+    reset,
+    startOver,
+    step,
+    bounds: { width: FIELD.width, height: FIELD.height },
+  };
 }
