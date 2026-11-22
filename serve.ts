@@ -1,43 +1,32 @@
-// Midnight Getaway — tiny static server for local testing only.
-// Serves game/ on port 8080 using the Node standard library.
+// Copper Fox — a tiny static server for local testing only. Serves game/ on
+// port 8080 using the Node standard library, and nothing else.
 // Run: node serve.ts   then open http://localhost:8080/
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { join, extname, normalize } from 'node:path';
+import { extname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = new URL('./game/', import.meta.url).pathname;
-const PORT = 8080;
-
-const TYPES = {
+const root = fileURLToPath(new URL('./game/', import.meta.url));
+const types = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.svg': 'image/svg+xml',
 };
 
-const server = createServer(async (req, res) => {
+const server = createServer(async (request, response) => {
+  const path = request.url === '/' ? 'index.html' : decodeURIComponent(request.url.split('?')[0]).replace(/^\/+/, '');
   try {
-    const url = new URL(req.url, 'http://localhost');
-    let path = decodeURIComponent(url.pathname);
-    if (path === '/') path = '/index.html';
-    const file = join(ROOT, normalize(path).replace(/^(\.\.[/\\])+/, ''));
-    if (!file.startsWith(ROOT)) {
-      res.writeHead(403);
-      res.end('forbidden');
-      return;
-    }
-    const data = await readFile(file);
-    res.writeHead(200, { 'content-type': TYPES[extname(file)] || 'application/octet-stream' });
-    res.end(data);
+    const body = await readFile(join(root, path));
+    response.writeHead(200, { 'content-type': types[extname(path)] ?? 'application/octet-stream' });
+    response.end(body);
   } catch {
-    res.writeHead(404);
-    res.end('not found');
+    response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+    response.end('Not found\n');
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`Midnight Getaway served at http://localhost:${PORT}/`);
+server.listen(8080, () => {
+  console.log('Copper Fox serving game/ at http://localhost:8080/');
 });
