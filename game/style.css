@@ -1,0 +1,28 @@
+body {
+  margin: 0;
+  background: #0a0d16;
+  color: #eef1f5;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+main {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 12px;
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #1b2030;
+  border: 2px solid #2c3550;
+  border-radius: 6px;
+}
+
+.hint {
+  margin: 8px 0 0;
+  font-size: 14px;
+  color: #9aa3b8;
+  text-align: center;
+}
